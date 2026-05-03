@@ -1,15 +1,16 @@
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 import os
 from tkcalendar import DateEntry
+import yfinance as yf # Pustaka baru untuk menarik harga historis
 
 class PortfolioApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Stock & Crypto Portfolio Tracker")
-        self.root.geometry("1000x850")
+        self.root.title("Stock & Crypto Portfolio Tracker - Simulation Mode")
+        self.root.geometry("1050x850")
         
         self.file_name = "portfolio_history.xlsx"
         self.portfolio = {} 
@@ -44,8 +45,6 @@ class PortfolioApp:
         self.lbl_cash.grid(row=0, column=0, columnspan=6, padx=10, pady=10, sticky="w")
 
         ttk.Label(cash_frame, text="Tanggal:").grid(row=1, column=0, padx=5, pady=5, sticky="w")
-        
-        # PERUBAHAN DI SINI: Menambahkan state='normal' agar bisa diketik manual
         self.cash_date_entry = DateEntry(cash_frame, width=12, background='darkblue', 
                                          foreground='white', borderwidth=2, 
                                          date_pattern='dd-mm-yyyy', state='normal')
@@ -66,8 +65,6 @@ class PortfolioApp:
         input_frame.pack(pady=5, padx=10, fill="x")
 
         ttk.Label(input_frame, text="Tanggal:").grid(row=0, column=0, padx=5, pady=5, sticky="w")
-        
-        # PERUBAHAN DI SINI: Menambahkan state='normal' agar bisa diketik manual
         self.date_entry = DateEntry(input_frame, width=12, background='darkblue', 
                                     foreground='white', borderwidth=2, 
                                     date_pattern='dd-mm-yyyy', state='normal')
@@ -76,6 +73,10 @@ class PortfolioApp:
         ttk.Label(input_frame, text="Ticker (Kode):").grid(row=0, column=2, padx=5, pady=5, sticky="w")
         self.ticker_entry = ttk.Entry(input_frame)
         self.ticker_entry.grid(row=0, column=3, padx=5, pady=5)
+
+        # FITUR BARU: Tombol penarik data historis
+        btn_fetch_price = ttk.Button(input_frame, text="Cek Harga Historis", command=self.fetch_historical_price)
+        btn_fetch_price.grid(row=0, column=4, padx=5, pady=5, sticky="w")
 
         ttk.Label(input_frame, text="Jumlah Lot/Unit:").grid(row=1, column=0, padx=5, pady=5, sticky="w")
         self.qty_entry = ttk.Entry(input_frame)
@@ -129,12 +130,47 @@ class PortfolioApp:
                 
         self.tree_hist.pack(fill="both", expand=True)
 
+    # --- FUNGSI YFINANCE HISTORICAL PRICE ---
+    def fetch_historical_price(self):
+        ticker_sym = self.ticker_entry.get().strip().upper()
+        selected_date = self.date_entry.get_date()
+        
+        if not ticker_sym:
+            messagebox.showwarning("Peringatan", "Masukkan Ticker terlebih dahulu!\n(Bursa Indonesia gunakan akhiran .JK, misal ASII.JK)")
+            return
+            
+        try:
+            # Karena tanggal terpilih bisa jatuh di akhir pekan, tarik data mundur 5 hari ke belakang
+            start_date = selected_date - timedelta(days=5)
+            # end_date pada yfinance bersifat eksklusif, maka ditambah 1 hari dari tanggal terpilih
+            end_date = selected_date + timedelta(days=1)
+            
+            # Download data harga dengan senyap (progress=False)
+            data = yf.download(ticker_sym, start=start_date.strftime('%Y-%m-%d'), end=end_date.strftime('%Y-%m-%d'), progress=False)
+            
+            if data.empty:
+                messagebox.showerror("Error", f"Data tidak ditemukan untuk '{ticker_sym}'. Pastikan kode saham benar.\n(Saham IHSG harus menggunakan format .JK)")
+                return
+            
+            # Ambil nilai penutupan (Close) dari hari perdagangan paling terakhir yang didapat
+            # yfinance versi terbaru mereturn DataFrame dengan MultiIndex, kita amankan pembacaannya
+            if isinstance(data['Close'], pd.DataFrame):
+                last_close = float(data['Close'].iloc[-1].iloc[0])
+            else:
+                last_close = float(data['Close'].iloc[-1])
+            
+            # Isi otomatis ke kolom Harga Satuan
+            self.price_entry.delete(0, tk.END)
+            self.price_entry.insert(0, f"{last_close:.2f}")
+            
+            messagebox.showinfo("Berhasil", f"Harga penutupan {ticker_sym} di sekitar tanggal {selected_date.strftime('%d-%m-%Y')} ditarik otomatis: {last_close:.2f}")
+            
+        except Exception as e:
+            messagebox.showerror("Error Fetching Data", f"Gagal mengambil harga historis:\n{str(e)}")
+
     # --- FUNGSI CASH MANAGEMENT ---
     def action_deposit(self):
         try:
-            # Karena state='normal', user bisa mengetik teks yang salah format.
-            # Menggunakan get_date() akan otomatis mengubah teks yang diketik manual menjadi objek datetime 
-            # jika formatnya benar (dd-mm-yyyy), atau menampilkan error bawaan tkcalendar.
             date_fmt = self.cash_date_entry.get_date().strftime("%d-%m-%Y")
             amount = float(self.cash_amount_entry.get().replace(',', '.'))
             
